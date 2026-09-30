@@ -14,3 +14,9 @@ minimumReleaseAgeExclude:
   - emdash
   - "@emdash-cms/*"
 blockExoticSubdeps: true
+
+peerDependencyRules:
+  ignoreMissing:
+    - pg
+    - "@cloudflare/kumo"
+    - "@phosphor-icons/react"

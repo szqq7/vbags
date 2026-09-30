@@ -7,8 +7,15 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			// ★ 独立数据库:创建后填入 wrangler d1 create 返回的 database_id
-			"database_name": "vbag-db","database_id": "ad0f7f09-ffcc-4d07-a554-16a47602ad32",
+			// ★ 独立数据库:vbag-db（ID 已与 Cloudflare 账号中的实际库对齐）
+			"database_name": "vbag-db","database_id": "97fb02bb-4d92-4333-a33a-f82962bd7f44",
+		},
+	],
+	"kv_namespaces": [
+		{
+			// EmDash 1.0.1 分布式对象缓存（替代 1.0.1 中已移除的 cloudflareCache）
+			"binding": "CACHE_KV",
+			"id": "20406c5a5b5c49c7b00951b438ca8247",
 		},
 	],
 	"r2_buckets": [
