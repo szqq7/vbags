@@ -1,14 +1,14 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "vbag",
+	"name": "vbags",
 	"main": "./src/worker.ts",
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"d1_databases": [
 		{
 			"binding": "DB",
-			// ★ 独立数据库:vbag-db（ID 已与 Cloudflare 账号中的实际库对齐）
-			"database_name": "vbag-db","database_id": "97fb02bb-4d92-4333-a33a-f82962bd7f44",
+			// ★ 独立数据库:vbags-db（ID 已与 Cloudflare 账号中的实际库对齐）
+			"database_name": "vbags-db","database_id": "aac0fd0a-2f88-456d-9a2e-dceaed66b53b",
 		},
 	],
 	"kv_namespaces": [
