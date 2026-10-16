@@ -1,30 +1,40 @@
 ---
 // =====================================================================
-// /products 入口 - 仅负责路由分发,不含任何业务逻辑
-// 三种页面类型:
-//   - single-spec : 非服装 + 单规格(例 120356)
-//   - multi-spec  : 非服装 + 多规格(例 1812092)
-//   - apparel     : 服装(例 306227 / 314750)
-// 每种类型对应一个物理隔离的独立组件,各自维护自身的 HTML/CSS/JS
+// /products 入口 —— 路由分发 + 列表态
+//
+// 详情态(带 ?code=xxx),三种页面类型:
+//   - single-spec : 非服装 + 单规格
+//   - multi-spec  : 非服装 + 多规格
+//   - apparel     : 服装
+//   每种类型对应一个物理隔离的独立组件,各自维护自身的 HTML/CSS/JS
+//   code 可以是 SPU(如 VF160),也可以是 entry slug(如 12-oz-canvas-tote-bag-2)
+//
+// 列表态(不带 ?code=):
+//   - 默认列出全部产品
+//   - 带 ?category=<分类slug> 时按分类过滤(分类法 products1,与 MegaMenu 同源)
 // =====================================================================
 import { resolveProduct } from "../../utils/product-data";
 import { getProductPageType } from "../../utils/product-page";
 import SingleSpecProduct from "../../components/product/SingleSpecProduct.astro";
 import MultiSpecProduct from "../../components/product/MultiSpecProduct.astro";
 import ApparelProduct from "../../components/product/ApparelProduct.astro";
+import ProductListPage from "../../components/product/ProductListPage.astro";
 
 const url = new URL(Astro.request.url);
 const requestedCode = url.searchParams.get("code");
-const defaultCode = "120356";
-const product = await resolveProduct(requestedCode || defaultCode);
+const requestedCategory = (url.searchParams.get("category") || "").trim();
 
-if (!product) {
+// 带 code → 详情态;不带 code → 列表态
+const product = requestedCode ? await resolveProduct(requestedCode) : null;
+
+if (requestedCode && !product) {
   return Astro.redirect("/404");
 }
 
-const pageType = getProductPageType(product);
+const pageType = product ? getProductPageType(product) : null;
 ---
 
-{pageType === "single-spec" && <SingleSpecProduct />}
-{pageType === "multi-spec"  && <MultiSpecProduct />}
-{pageType === "apparel"     && <ApparelProduct />}
+{product && pageType === "single-spec" && <SingleSpecProduct />}
+{product && pageType === "multi-spec"  && <MultiSpecProduct />}
+{product && pageType === "apparel"     && <ApparelProduct />}
+{!product && <ProductListPage category={requestedCategory} />}

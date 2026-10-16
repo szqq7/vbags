@@ -364,19 +364,32 @@ function entryToRaw(entry: any): any {
 }
 
 /**
- * 从 EmDash(D1) 按 SPU 读取单个产品并归一化。
+ * 从 EmDash(D1) 读取单个产品并归一化。
+ * code 既可以传 SPU(如 VF160),也可以传 entry slug(如 12-oz-canvas-tote-bag-2):
+ * 先按 `spu` 精确匹配,未命中再按 `slug` 匹配 —— 后者用于兼容站内搜索
+ * (emdash LiveSearch 默认生成 /products/<slug>)与短链访问。
  * - 命中 → 返回 ProductData
- * - 未命中 / 出错 → 返回 null
+ * - 两者都未命中 / 出错 → 返回 null
  */
 export async function loadProductFromDB(code: string): Promise<ProductData | null> {
   if (!code) return null;
   try {
-    const { entries } = await getEmDashCollection("products", {
+    // 1) 主编码:SPU
+    const bySpu = await getEmDashCollection("products", {
       status: "published",
       where: { spu: code },
       limit: 1,
     });
-    const list = (entries as any[]) || [];
+    let list = (bySpu.entries as any[]) || [];
+    // 2) 回落到 slug
+    if (!list.length) {
+      const bySlug = await getEmDashCollection("products", {
+        status: "published",
+        where: { slug: code },
+        limit: 1,
+      });
+      list = (bySlug.entries as any[]) || [];
+    }
     if (!list.length) return null;
     return normalizeProduct(entryToRaw(list[0]));
   } catch {
@@ -391,6 +404,71 @@ export async function loadProductFromDB(code: string): Promise<ProductData | nul
  */
 export async function resolveProduct(code: string): Promise<ProductData | null> {
   return loadProductFromDB(code);
+}
+
+// =====================================================================
+// 产品列表(/products 的列表态,可按分类过滤)
+// =====================================================================
+
+/** 产品分类法名 —— 与 MegaMenu 的 getTaxonomyTerms("products1") 用的是同一个 */
+export const PRODUCT_TAXONOMY = "products1";
+
+/** 列表卡片所需的最小字段集 */
+export interface ProductListItem {
+  id: string;
+  /** 详情页编码(优先 SPU) */
+  code: string;
+  title: string;
+  description: string;
+  image: string;
+  /** 详情页链接 */
+  link: string;
+}
+
+/** entry → 列表卡片项;缺 SPU 也缺 slug 的条目返回 null(由调用方过滤掉) */
+function toListItem(entry: any): ProductListItem | null {
+  const d = entry?.data ?? entry ?? {};
+  const bigJson = safeParse(d.big_json) || {};
+  const pics = safeParse(d.picture_json);
+  const urls: string[] = (Array.isArray(pics) ? pics : [])
+    .map((p: any) => (typeof p === "string" ? p : p?.url || ""))
+    .filter(Boolean);
+  const code = d.spu || bigJson.SPU || entry?.slug || "";
+  if (!code) return null;
+  return {
+    id: String(entry?.id ?? code),
+    code: String(code),
+    title: String(d.title || bigJson.title || code),
+    description: String(d.description || ""),
+    image: urls[0] || "",
+    link: "/products?code=" + encodeURIComponent(String(code)),
+  };
+}
+
+/**
+ * 列出可展示的产品。
+ * - 不传 category → 全部 published 产品
+ * - 传 category    → 该分类(products1)下的 published 产品
+ *
+ * EmDash 的 where 支持以「分类法名」为键做 term 过滤(其 EntryFilter 文档写明
+ * `{ category: 'news' }` 即按分类法过滤),官方 getEntriesByTerm 就是这么实现的;
+ * 这里额外显式带上 status:"published" 以排除草稿。
+ */
+export async function listProducts(
+  opts: { category?: string; limit?: number } = {},
+): Promise<ProductListItem[]> {
+  const category = (opts.category || "").trim();
+  try {
+    const { entries } = await getEmDashCollection("products", {
+      status: "published",
+      limit: opts.limit && opts.limit > 0 ? opts.limit : 200,
+      ...(category ? { where: { [PRODUCT_TAXONOMY]: category } } : {}),
+    });
+    const rows = (entries as any[]) || [];
+    return rows.map(toListItem).filter((x): x is ProductListItem => x !== null);
+  } catch {
+    return [];
+  }
 }
 
 /**
