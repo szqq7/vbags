@@ -8,7 +8,7 @@
 import Base from "../../layouts/Base.astro";
 import ImprintColorPicker from "../../components/product/ImprintColorPicker.astro";
 import {
-  loadProduct, getColorOptions, getPricingSteps, getPrintMethodTabs,
+  resolveProduct, getColorOptions, getPricingSteps, getPrintMethodTabs,
   getPrintingSurfaces, getAllImages, getDownloadFiles, getTemplateFiles,
   getSpecifications, getPublishFeeData, getDeliveryDayData, loadImprintColors, type ProductData
 } from "../../utils/product-data";
@@ -16,7 +16,7 @@ import {
 const url = new URL(Astro.request.url);
 const requestedCode = url.searchParams.get("code");
 const defaultCode = "120356";
-const product: ProductData | null = loadProduct(requestedCode || defaultCode);
+const product: ProductData | null = await resolveProduct(requestedCode || defaultCode);
 
 if (!product) {
   return Astro.redirect("/404");

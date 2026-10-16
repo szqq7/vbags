@@ -3,13 +3,9 @@ import { getEmDashCollection, getEmDashEntry } from 'emdash'
 import Layout from '../layouts/Base.astro'
 import HeroBanner from './components/HeroBanner.astro'
 import ProductGrid from './components/ProductGrid.astro'
-import StatsSection from './components/StatsSection.astro'
 
 const { entry: heroEntry = null } = await getEmDashEntry('hero', 'home')
   .catch(() => ({ entry: null }))
-
-const { entries: statEntries = [] } = await getEmDashCollection('stats', { status: 'published' })
-  .catch(() => ({ entries: [] }))
 
 const { entries: hblockEntries = [] } = await getEmDashCollection('hblock', { status: 'published', orderBy: { sort_order: 'asc' } })
   .catch(() => ({ entries: [] }))
@@ -106,15 +102,6 @@ const hero = heroEntry ? {
   images: [],
   interval: 4,
 }
-
-const stats = statEntries.length > 0
-  ? statEntries.map((s: any) => ({ number: String(s.data?.number ?? '0'), label: s.data?.label ?? '' }))
-  : [
-      { number: '50K+', label: '全球用户' },
-      { number: '80+', label: '覆盖国家' },
-      { number: '3K+', label: '在售 SKU' },
-      { number: '99.2%', label: '好评率' },
-    ]
 ---
 
 <Layout title="EmDash — 智能热转印设备">
@@ -136,30 +123,4 @@ const stats = statEntries.length > 0
       </div>
     )
   })}
-
-  <StatsSection stats={stats} />
-  <div class="newsletter">
-    <div class="newsletter-inner">
-      <span class="newsletter-tag">STAY IN TOUCH</span>
-      <h2 class="newsletter-title">获取最新资讯</h2>
-      <p class="newsletter-desc">订阅邮件，获取新品发布与专属优惠</p>
-      <form class="newsletter-form" onsubmit="return false">
-        <input type="email" placeholder="输入您的邮箱地址" class="newsletter-input" />
-        <button type="submit" class="newsletter-btn">订阅</button>
-      </form>
-    </div>
-  </div>
 </Layout>
-
-<style>
-  .newsletter{background:#111;padding:2.5rem 2rem;text-align:center}
-  .newsletter-inner{max-width:480px;margin:0 auto}
-  .newsletter-tag{display:inline-block;color:#22C55E;font-size:.75rem;font-weight:500;letter-spacing:2px;margin-bottom:.5rem}
-  .newsletter-title{font-size:1.5rem;font-weight:700;color:#FAF5E6;margin:0 0 .25rem}
-  .newsletter-desc{font-size:.8125rem;color:#D8CDB5;margin:0 0 1.25rem}
-  .newsletter-form{display:flex;max-width:380px;margin:0 auto}
-  .newsletter-input{flex:1;background:#FAF5E6;border:none;padding:.625rem 1rem;font-size:.8125rem;color:#333;border-radius:4px 0 0 4px;outline:none}
-  .newsletter-input::placeholder{color:#BFAF8E}
-  .newsletter-btn{background:#22C55E;color:#fff;border:none;padding:.625rem 1.25rem;font-size:.8125rem;font-weight:600;border-radius:0 4px 4px 0;cursor:pointer}
-  .newsletter-btn:hover{background:#1DA34E}
-</style>

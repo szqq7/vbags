@@ -1,4 +1,4 @@
-import productsData from "../data/products.json";
+import { getEmDashCollection } from "emdash";
 import imprintColorsData from "../data/imprint-colors.json";
 
 // ===== 类型定义 =====
@@ -79,12 +79,6 @@ function safeArr<T>(v: T[] | undefined | null): T[] {
 function safeStr(v: any, fallback: string): string {
   if (v === null || v === undefined) return fallback;
   return String(v);
-}
-
-export function getAllProducts(): ProductData[] {
-  const data = productsData as any;
-  if (!data || !data.products) return [];
-  return data.products.map((p: any) => normalizeProduct(p));
 }
 
 /**
@@ -317,12 +311,86 @@ function normalizeProduct(raw: any): ProductData {
   return result as ProductData;
 }
 
-export function loadProduct(code: string): ProductData | null {
-  const list = getAllProducts();
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].code === code) return list[i];
+// =====================================================================
+// EmDash(D1) 数据源
+// ---------------------------------------------------------------------
+// 线上 products 字段分工(2026-10-16 确认):
+//   big_json     = 除图片以外的全部信息(定价在 specs 下)
+//   picture_json = 全部图片 [{url}]
+//   title / spu / colors / description / keywords = 搜索字段
+// 目前 big_json 不含 surfaces / files / knifeFiles / imgMain /
+// surfaceImages / proofingFee / blankScale —— 前台暂不使用,后续补齐。
+// =====================================================================
+
+/** 宽松解析:接受 JSON 字符串或已解析对象;失败返回 null */
+function safeParse(raw: any): any {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw === "object") return raw;
+  if (typeof raw !== "string") return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * 把 EmDash 的 products entry 还原成 normalizeProduct() 需要的 raw 形态。
+ * 字段可能来自 entry.data 或 entry 本身(两者都兜一下)。
+ */
+function entryToRaw(entry: any): any {
+  const d = entry?.data ?? entry ?? {};
+  const bigJson = safeParse(d.big_json) || {};
+  const pics = safeParse(d.picture_json);
+
+  const urls: string[] = (Array.isArray(pics) ? pics : [])
+    .map((p: any) => (typeof p === "string" ? p : p?.url || ""))
+    .filter(Boolean);
+
+  return {
+    ...bigJson,
+    // 系统字段覆盖 big_json 里的同名键(线上是权威值)
+    SPU: d.spu || bigJson.SPU || entry?.slug || "",
+    title: d.title || bigJson.title || "",
+    colors: bigJson.colors,
+    // 图片:第一张作主图,全部作为 surface 图
+    imgMain: urls[0] || "",
+    surfaceImages: urls.map((u, i) => ({ position: `Surface ${i + 1}`, url: u })),
+    // 以下前台暂不包含(经确认,后续会并入 big_json)
+    files: [],
+    knifeFiles: [],
+    surfaces: [],
+  };
+}
+
+/**
+ * 从 EmDash(D1) 按 SPU 读取单个产品并归一化。
+ * - 命中 → 返回 ProductData
+ * - 未命中 / 出错 → 返回 null
+ */
+export async function loadProductFromDB(code: string): Promise<ProductData | null> {
+  if (!code) return null;
+  try {
+    const { entries } = await getEmDashCollection("products", {
+      status: "published",
+      where: { spu: code },
+      limit: 1,
+    });
+    const list = (entries as any[]) || [];
+    if (!list.length) return null;
+    return normalizeProduct(entryToRaw(list[0]));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 前台产品页唯一入口。
+ * 当前只读 EmDash(D1) 的 products collection —— 静态 JSON 自 2026-10-16 起不再参与读取
+ * (src/data/products.json 文件保留,但已无任何 import)。
+ */
+export async function resolveProduct(code: string): Promise<ProductData | null> {
+  return loadProductFromDB(code);
 }
 
 /**

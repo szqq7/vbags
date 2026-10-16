@@ -7,7 +7,7 @@
 //   - apparel     : 服装(例 306227 / 314750)
 // 每种类型对应一个物理隔离的独立组件,各自维护自身的 HTML/CSS/JS
 // =====================================================================
-import { loadProduct } from "../../utils/product-data";
+import { resolveProduct } from "../../utils/product-data";
 import { getProductPageType } from "../../utils/product-page";
 import SingleSpecProduct from "../../components/product/SingleSpecProduct.astro";
 import MultiSpecProduct from "../../components/product/MultiSpecProduct.astro";
@@ -16,7 +16,7 @@ import ApparelProduct from "../../components/product/ApparelProduct.astro";
 const url = new URL(Astro.request.url);
 const requestedCode = url.searchParams.get("code");
 const defaultCode = "120356";
-const product = loadProduct(requestedCode || defaultCode);
+const product = await resolveProduct(requestedCode || defaultCode);
 
 if (!product) {
   return Astro.redirect("/404");
