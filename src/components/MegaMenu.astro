@@ -51,7 +51,7 @@ function hasDirectActiveChild(item: MenuItem): boolean {
 
     {topItems.map((item) => (
       <div class="cat-item">
-        <a href={"/products?category=" + item.slug}
+        <a href={"/products?category=" + encodeURIComponent(item.slug)}
            class:list={["cat-trigger", { active: isActive(item.slug) || hasDirectActiveChild(item) }]}>
           {item.name}
           {(item.children || []).length > 0 && <span class="arrow">▾</span>}
@@ -59,7 +59,7 @@ function hasDirectActiveChild(item: MenuItem): boolean {
         {(item.children || []).length > 0 && (
           <div class="cat-drop">
             {item.children.map((child) => (
-              <a href={"/products?category=" + child.slug}
+              <a href={"/products?category=" + encodeURIComponent(child.slug)}
                  class:list={["cat-sub-link", { active: isActive(child.slug) }]}>
                 {child.name}
               </a>

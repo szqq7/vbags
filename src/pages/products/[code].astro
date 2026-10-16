@@ -1,4 +1,16 @@
 ---
-const code = Astro.params.code;
-return Astro.redirect("/products?code=" + code, 302);
+import { decodeSlug } from "emdash";
+
+// 短链 /products/<code> → 302 到 /products?code=<code>
+//
+// ⚠️ Astro 的 Astro.params 走的是 decodeURI(不是 decodeURIComponent):
+//    %20 → 空格,但 %26 %3F %23 %2B %2F 等"保留字符"的编码形态会被原样保留。
+//    直接 encodeURIComponent(params) 会把 %26 二次编码成 %2526。
+//    所以先用官方 decodeSlug 规范化为真正的 slug,再编码进 query。
+//    (decodeSlug 内部就是 decodeURIComponent;失败返回 undefined → 回落原值,
+//     覆盖 slug 含裸 % 的情况,如 "100%-cotton")
+//    与 /category/[slug] / /posts/[slug] / /pages/[slug] / /tag/[slug] 处理一致。
+const decoded = decodeSlug(Astro.params.code);
+const code = decoded ?? Astro.params.code ?? "";
+return Astro.redirect("/products?code=" + encodeURIComponent(code), 302);
 ---
