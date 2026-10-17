@@ -335,27 +335,104 @@ function safeParse(raw: any): any {
 }
 
 /**
+ * 解析 picture_json,兼容线上实际存在的三种形态:
+ *   1) { main: [{index,caption,url,hasLogo}], colors: [{index,caption,url}] }  ← 当前线上格式
+ *   2) [{ url }] / ["url"]                                                     ← 旧格式
+ *   3) { "任意键": "url" } / { "任意键": [{url}] }                             ← 兜底
+ * main 按 index 升序;colors 保留 caption 作为颜色名。
+ */
+function extractPictures(raw: any): { main: string[]; colors: { name: string; url: string }[] } {
+  const main: string[] = [];
+  const colors: { name: string; url: string }[] = [];
+  const pics = safeParse(raw);
+  const addMain = (u: any): void => {
+    const s = typeof u === "string" ? u : u?.url || "";
+    if (s && main.indexOf(s) === -1) main.push(s);
+  };
+  if (!pics) return { main, colors };
+
+  // 形态 2:数组
+  if (Array.isArray(pics)) {
+    pics.forEach(addMain);
+    return { main, colors };
+  }
+  if (typeof pics !== "object") return { main, colors };
+
+  const toArr = (v: any): any[] => (Array.isArray(v) ? v : []);
+
+  // 形态 1:main 按 index 升序(缺 index 时保持原序)
+  toArr(pics.main)
+    .map((p: any, i: number) => ({ p, k: typeof p?.index === "number" ? p.index : i }))
+    .sort((a: any, b: any) => a.k - b.k)
+    .forEach((x: any) => addMain(x.p));
+
+  toArr(pics.colors).forEach((p: any) => {
+    const url = typeof p === "string" ? p : p?.url || "";
+    if (!url) return;
+    const name = typeof p === "object" ? String(p?.caption || p?.name || "") : "";
+    colors.push({ name, url });
+  });
+
+  // 形态 3:既无 main 也无 colors 时的兜底
+  if (main.length === 0 && colors.length === 0) {
+    Object.keys(pics).forEach((k) => {
+      const v = (pics as any)[k];
+      if (typeof v === "string") addMain(v);
+      else toArr(v).forEach(addMain);
+    });
+  }
+  return { main, colors };
+}
+
+/** 颜色名:兼容 "Blue,Natural,Red" 字符串、["Blue"]、[{name:"Blue"}] */
+function parseColorNames(raw: any): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((c) => (typeof c === "string" ? c : c?.name || ""))
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+  }
+  if (typeof raw === "string") {
+    return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
  * 把 EmDash 的 products entry 还原成 normalizeProduct() 需要的 raw 形态。
  * 字段可能来自 entry.data 或 entry 本身(两者都兜一下)。
  */
 function entryToRaw(entry: any): any {
   const d = entry?.data ?? entry ?? {};
   const bigJson = safeParse(d.big_json) || {};
-  const pics = safeParse(d.picture_json);
+  const { main: mainPics, colors: colorPics } = extractPictures(d.picture_json);
 
-  const urls: string[] = (Array.isArray(pics) ? pics : [])
-    .map((p: any) => (typeof p === "string" ? p : p?.url || ""))
-    .filter(Boolean);
+  // surface 图 = 主图 + 未重复的颜色图
+  const allPics: string[] = mainPics.slice();
+  for (const c of colorPics) {
+    if (c.url && allPics.indexOf(c.url) === -1) allPics.push(c.url);
+  }
+
+  // 颜色名优先取 colors 列(搜索字段),其次 big_json.colors,最后用 picture_json.colors 的 caption;
+  // 每个颜色按名称匹配 picture_json.colors,带上对应产品图(点色块可切图)
+  const fromCol = parseColorNames(d.colors);
+  const fromBig = parseColorNames(bigJson.colors);
+  const names = fromCol.length ? fromCol : fromBig.length ? fromBig : colorPics.map((c) => c.name).filter(Boolean);
+  const norm = (s: string): string => s.toLowerCase().replace(/[\s_\-]+/g, "");
+  const colorList = names.map((name) => {
+    const hit = colorPics.find((c) => c.name && norm(c.name) === norm(name));
+    return { name, imageUrl: hit ? hit.url : "" };
+  });
 
   return {
     ...bigJson,
     // 系统字段覆盖 big_json 里的同名键(线上是权威值)
     SPU: d.spu || bigJson.SPU || entry?.slug || "",
     title: d.title || bigJson.title || "",
-    colors: bigJson.colors,
-    // 图片:第一张作主图,全部作为 surface 图
-    imgMain: urls[0] || "",
-    surfaceImages: urls.map((u, i) => ({ position: `Surface ${i + 1}`, url: u })),
+    colors: colorList,
+    // 图片:main 第一张作主图(main 缺失时退到颜色图),全部作为 surface 图
+    imgMain: mainPics[0] || colorPics[0]?.url || "",
+    surfaceImages: allPics.map((u, i) => ({ position: `Surface ${i + 1}`, url: u })),
     // 以下前台暂不包含(经确认,后续会并入 big_json)
     files: [],
     knifeFiles: [],
@@ -429,10 +506,7 @@ export interface ProductListItem {
 function toListItem(entry: any): ProductListItem | null {
   const d = entry?.data ?? entry ?? {};
   const bigJson = safeParse(d.big_json) || {};
-  const pics = safeParse(d.picture_json);
-  const urls: string[] = (Array.isArray(pics) ? pics : [])
-    .map((p: any) => (typeof p === "string" ? p : p?.url || ""))
-    .filter(Boolean);
+  const { main: mainPics, colors: colorPics } = extractPictures(d.picture_json);
   const code = d.spu || bigJson.SPU || entry?.slug || "";
   if (!code) return null;
   return {
@@ -440,7 +514,7 @@ function toListItem(entry: any): ProductListItem | null {
     code: String(code),
     title: String(d.title || bigJson.title || code),
     description: String(d.description || ""),
-    image: urls[0] || "",
+    image: mainPics[0] || colorPics[0]?.url || "",
     link: "/products?code=" + encodeURIComponent(String(code)),
   };
 }
@@ -655,6 +729,9 @@ export function getAllImages(p: ProductData): string[] {
     if (out.indexOf(u) === -1) out.push(u);
   }
   push(p.imgMainUrl);
+  // normalizeProduct 已经把 picture_json 的全部图片摊到 images(main + colors)
+  const gallery = safeArr((p as any).images);
+  for (let i = 0; i < gallery.length; i++) push(gallery[i]);
   const specs = safeArr(p.productSpecs);
   for (let i = 0; i < specs.length; i++) push(specs[i].imageUrl);
   const files = safeArr(p.files);
