@@ -95,7 +95,7 @@ const hero = heroEntry ? {
   interval: heroEntry.data?.images_interval || 4,
 } : {
   badge_text: '',
-  headline: '欢迎访问 EmDash',
+  headline: '欢迎访问 vbags',
   subheadline: '',
   cta_text: '探索产品',
   cta_link: '/products',
@@ -104,7 +104,7 @@ const hero = heroEntry ? {
 }
 ---
 
-<Layout title="EmDash — 智能热转印设备">
+<Layout title={hero.headline}>
   <HeroBanner hero={hero} />
 
   {visibleBlocks.map((entry: any) => {
