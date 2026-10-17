@@ -1,5 +1,5 @@
 ---
-import { getTaxonomyTerms } from "emdash";
+import { getTaxonomyTerms, getMenu } from "emdash";
 
 // includeCounts:false → 0.31.1 性能优化,菜单不需要显示条目计数,跳过聚合查询
 const termTree = await getTaxonomyTerms("products1", { includeCounts: false });
@@ -7,13 +7,13 @@ const termTree = await getTaxonomyTerms("products1", { includeCounts: false });
 const url = new URL(Astro.request.url);
 const activeCategory = url.searchParams.get("category") || "";
 
-type MenuItem = {
+type MenuNode = {
   slug: string;
   name: string;
-  children: { slug: string; name: string }[];
+  children: MenuNode[];
 };
 
-function buildMenu(terms: any[]): MenuItem[] {
+function buildMenu(terms: any[]): MenuNode[] {
   return terms.map((t) => ({
     slug: t.slug,
     name: t.label,
@@ -23,15 +23,59 @@ function buildMenu(terms: any[]): MenuItem[] {
 
 const menuItems = buildMenu(termTree);
 
-const topItems: MenuItem[] = [];
-for (const l1 of menuItems) {
-  topItems.push(l1);
-  for (const l2 of l1.children) {
-    if (l2.children.length > 0) {
-      topItems.push(l2);
-    }
+/* 后台菜单 catbar 决定横条显示哪些一级分类、顺序与文案。
+   未列入的一级分类统一收进 "More" 下拉，保证所有分类仍可到达。
+   菜单不存在或为空时回退到全量一级分类（保持旧行为）。 */
+const CATBAR_MENU = "catbar";
+const catbar = await getMenu(CATBAR_MENU);
+
+/* 从菜单链接里解析分类 slug，兼容三种写法：
+   /products?category=<slug>（推荐）、/products1/<slug>（分类法引用）、/category/<slug> */
+function categorySlugFromUrl(raw: string): string {
+  if (!raw) return "";
+  try {
+    const u = new URL(raw, "https://placeholder.invalid");
+    const q = u.searchParams.get("category");
+    if (q) return q;
+    const m =
+      u.pathname.match(/^\/(?:products1|category)\/(.+?)\/?$/) ||
+      u.pathname.match(/^\/products\/(.+?)\/?$/);
+    if (m) return decodeURIComponent(m[1]);
+    return "";
+  } catch {
+    return "";
   }
 }
+
+const l1Items = menuItems;
+const bySlug = new Map<string, MenuNode>(l1Items.map((i) => [i.slug, i]));
+
+type NavEntry = { label: string; href: string; slug: string; node: MenuNode | null };
+
+let navEntries: NavEntry[] = [];
+if (catbar && catbar.items.length > 0) {
+  navEntries = catbar.items.map((it: any) => {
+    const slug = categorySlugFromUrl(it.url || "");
+    return {
+      label: it.label,
+      href: it.url || "/products",
+      slug,
+      node: slug ? bySlug.get(slug) ?? null : null,
+    };
+  });
+}
+const menuDriven = navEntries.length > 0;
+if (!menuDriven) {
+  navEntries = l1Items.map((i) => ({
+    label: i.name,
+    href: "/products?category=" + encodeURIComponent(i.slug),
+    slug: i.slug,
+    node: i,
+  }));
+}
+
+const picked = new Set(navEntries.map((e) => e.slug).filter(Boolean));
+const moreItems: MenuNode[] = menuDriven ? l1Items.filter((i) => !picked.has(i.slug)) : [];
 
 /* 完全匹配 */
 function isActive(s: string): boolean {
@@ -39,26 +83,30 @@ function isActive(s: string): boolean {
 }
 
 /* 只检查直接子节点 —— 不递归 */
-function hasDirectActiveChild(item: MenuItem): boolean {
-  if (!item.children) return false;
+function hasDirectActiveChild(item: MenuNode | null): boolean {
+  if (!item || !item.children) return false;
   return item.children.some((c) => c.slug === activeCategory);
 }
+
+const moreActive = moreItems.some(
+  (i) => i.slug === activeCategory || i.children.some((c) => c.slug === activeCategory),
+);
 ---
 
 <nav class="cat-menu">
   <div class="cat-inner">
     <a href="/products" class:list={["cat-all", { active: isActive("") }]}>All Products</a>
 
-    {topItems.map((item) => (
+    {navEntries.map((item) => (
       <div class="cat-item">
-        <a href={"/products?category=" + encodeURIComponent(item.slug)}
-           class:list={["cat-trigger", { active: isActive(item.slug) || hasDirectActiveChild(item) }]}>
-          {item.name}
-          {(item.children || []).length > 0 && <span class="arrow">▾</span>}
+        <a href={item.href}
+           class:list={["cat-trigger", { active: isActive(item.slug) || hasDirectActiveChild(item.node) }]}>
+          {item.label}
+          {item.node && item.node.children.length > 0 && <span class="arrow">▾</span>}
         </a>
-        {(item.children || []).length > 0 && (
+        {item.node && item.node.children.length > 0 && (
           <div class="cat-drop">
-            {item.children.map((child) => (
+            {item.node.children.map((child) => (
               <a href={"/products?category=" + encodeURIComponent(child.slug)}
                  class:list={["cat-sub-link", { active: isActive(child.slug) }]}>
                 {child.name}
@@ -68,6 +116,23 @@ function hasDirectActiveChild(item: MenuItem): boolean {
         )}
       </div>
     ))}
+
+    {moreItems.length > 0 && (
+      <div class="cat-item">
+        <span class:list={["cat-trigger", "cat-more", { active: moreActive }]}>
+          More
+          <span class="arrow">▾</span>
+        </span>
+        <div class="cat-drop cat-drop-more">
+          {moreItems.map((item) => (
+            <a href={"/products?category=" + encodeURIComponent(item.slug)}
+               class:list={["cat-sub-link", { active: isActive(item.slug) || hasDirectActiveChild(item) }]}>
+              {item.name}
+            </a>
+          ))}
+        </div>
+      </div>
+    )}
   </div>
 </nav>
 
@@ -122,6 +187,7 @@ function hasDirectActiveChild(item: MenuItem): boolean {
 }
 .cat-trigger:hover{color:#000;border-color:#06c}
 .cat-trigger.active{color:#06c;border-color:#06c;font-weight:600}
+.cat-more{user-select:none}
 .arrow{font-size:11px;transition:transform .15s;flex-shrink:0}
 .cat-drop{
   position:absolute !important;
@@ -145,6 +211,11 @@ function hasDirectActiveChild(item: MenuItem): boolean {
   visibility:visible !important;
   transform:translateY(0) !important;
   display:block !important;
+}
+.cat-drop-more{
+  left:auto !important;
+  right:0 !important;
+  min-width:240px;
 }
 .cat-sub-link{
   display:flex;
