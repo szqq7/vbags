@@ -139,8 +139,8 @@ const isLoggedIn = !!Astro.locals.user;
 			</nav>
 		</header>
 
-				{/* MegaMenu 只在产品列表页 / 产品详情页展示 */}
-		{(new URL(Astro.request.url).pathname === '/products') && <MegaMenu />}
+		{/* MegaMenu 全站显示（首页 hero 上方 / 产品页 / 内页），分类为空也保留 */}
+		<MegaMenu />
 
 
 
