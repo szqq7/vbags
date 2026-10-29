@@ -32,7 +32,14 @@ const productColors = getColorOptions(product);
 // Imprint 印刷颜色:从 imprint-colors.json 读取(独立数据源)
 const imprintColors = loadImprintColors();
 const methodTabs = getPrintMethodTabs(product);
-const surfaces = getPrintingSurfaces(product);
+// Imprint Location:优先 raw.surfaces;缺失时回退 big_json specs[].printing[].positions 并集
+// 回退对象必须带 regions(模板 s.regions[0] 取尺寸,无数据则 W/H 显示 0)
+const surfaces = (() => {
+  const fromRaw = getPrintingSurfaces(product);
+  if (fromRaw.length > 0) return fromRaw;
+  const positions: string[] = (product as any).imprintPositions || [];
+  return positions.map((pos) => ({ name: pos, regions: [] } as any));
+})();
 const downloadFiles = getDownloadFiles(product);
 const templateFiles = getTemplateFiles(product);
 const specs = getSpecifications(product);
@@ -45,7 +52,7 @@ const defaultColor: string = productColors.length > 0 ? productColors[0].name : 
 type SizeRow = {
   label: string;
   priceTiers: { num: number; price: number; formatted: string }[];
-  allWayTiers?: Record<string, { num: number; price: number; formatted: string }[]>;
+  allWayTiers?: Record<string, { num: number; price: number; formatted: string; deliverDay: number | null }[]>;
   allWayVariants?: Record<string, { colorCount: number; positionCount: number; setUpCharge: number; addOn: number }[]>;
   min: number;
 };
@@ -63,18 +70,18 @@ const productSizes: SizeRow[] = (() => {
     const blankTiers = tiers
       .filter(t => typeof t.num === "number" && t.price !== undefined)
       .sort((a, b) => a.num - b.num)
-      .map(t => ({ num: t.num, price: parseFloat(t.price), formatted: "$" + parseFloat(t.price).toFixed(2) }));
+      .map(t => ({ num: t.num, price: parseFloat(t.price), formatted: "$" + parseFloat(t.price).toFixed(2), deliverDay: t.deliverDay ?? null }));
 
     // ★ 每个 spec 自己的 printingByWay(丝印/热转印等)各自的 baseSteps
     const specPrinting: Record<string, any[]> = (s.printingByWay) || {};
     // ★ variants 加价表:颜色×位置 → setUpCharge + addOn
     const specVariants: Record<string, any[]> = (s.variantsByWay) || {};
-    const allWayTiers: Record<string, { num: number; price: number; formatted: string }[]> = { Blank: blankTiers };
+    const allWayTiers: Record<string, { num: number; price: number; formatted: string; deliverDay: number | null }[]> = { Blank: blankTiers };
     for (const wn of Object.keys(specPrinting)) {
       allWayTiers[wn] = specPrinting[wn]
         .filter((t: any) => typeof t.num === "number" && t.price !== undefined)
         .sort((a: any, b: any) => a.num - b.num)
-        .map((t: any) => ({ num: t.num, price: parseFloat(t.price), formatted: "$" + parseFloat(t.price).toFixed(2) }));
+        .map((t: any) => ({ num: t.num, price: parseFloat(t.price), formatted: "$" + parseFloat(t.price).toFixed(2), deliverDay: t.deliverDay ?? null }));
     }
 
     out.push({
@@ -569,6 +576,26 @@ function mapCountToMethod(val) {
   return val;
 }
 
+// 当前尺寸 × 当前工艺 × (颜色数×位置数) 命中的 variant(big_json specs[].printing[].variants)
+function getCurrentVariant() {
+  var tag = document.querySelector(".size-tags[data-mode='multi-spec'] .size-tag.selected");
+  if (!tag) return null;
+  var vRaw = tag.getAttribute("data-all-way-variants");
+  if (!vRaw) return null;
+  try {
+    var vMap = JSON.parse(vRaw || "{}");
+    var variants = vMap[__CURRENT_WAY__] || [];
+    var cc = getCurrentColorCount();
+    var pc = getCurrentPositionCount();
+    for (var i = 0; i < variants.length; i++) {
+      if (Number(variants[i].colorCount) === cc && Number(variants[i].positionCount) === pc) {
+        return variants[i];
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+
 function getCurrentSetupCharge() {
   var activeTab = document.querySelector(".tab-btn.active");
   var way = activeTab ? (activeTab.getAttribute("data-method") || "") : "";
@@ -578,6 +605,17 @@ function getCurrentSetupCharge() {
   var pos = 1;
   var boxes = document.querySelectorAll(".imprint-location-row input[type=checkbox]:checked");
   pos = Math.max(1, boxes.length);
+
+  // ★ 优先:当前尺寸的 variants(big_json specs[].printing[].variants,Set-Up/addOn 随尺寸走)
+  var v = getCurrentVariant();
+  if (v) {
+    return {
+      fee: Number(v.setUpCharge) || 0,
+      unitPrice: 0,
+      baseUnitPrice: 0,
+      unitDiff: Number(v.addOn) || 0,   // 单件加价(Imprint 行)
+    };
+  }
 
   // 多键 fallback:解决 way/method/pos 与数据不匹配时的 $0 问题(1812092 案例)
   var fee = 0, unitPrice = 0;
@@ -634,6 +672,25 @@ function updateDeliveryDay() {
   var method = countSel ? mapCountToMethod(countSel.value) : "1-color";
   var boxes = document.querySelectorAll(".imprint-location-row input[type=checkbox]:checked");
   var pos = Math.max(1, boxes.length);
+
+  // ★ 优先:当前尺寸 × 当前工艺 阶梯自带的 deliverDay(big_json baseSteps[].deliverDay,随尺寸走)
+  var tag = document.querySelector(".size-tags[data-mode='multi-spec'] .size-tag.selected");
+  if (tag) {
+    try {
+      var tMap = JSON.parse(tag.getAttribute("data-all-way-tiers") || "{}");
+      var tTiers = tMap[way] || [];
+      var tIdx = -1;
+      for (var t = 0; t < tTiers.length; t++) {
+        if (qty >= tTiers[t].num) tIdx = t; else break;
+      }
+      if (qty <= 0) tIdx = 0;
+      if (tIdx >= 0 && tTiers[tIdx] && tTiers[tIdx].deliverDay != null) {
+        var el0 = document.getElementById("msDeliveryDays");
+        if (el0) el0.textContent = tTiers[tIdx].deliverDay + " Days";
+        return;
+      }
+    } catch(e) {}
+  }
 
   // 找当前 qty 匹配的最低 tier(采用与 pricing 相同的累计逻辑)
   var day = 0;

@@ -108,12 +108,15 @@ function normalizeProduct(raw: any): ProductData {
     // - variantsByWay[way]      = variants 数组(colorCount × positionCount → setUpCharge + addOn)
     const printingByWay: Record<string, any[]> = {};
     const variantsByWay: Record<string, any[]> = {};
+    const printingPositionsByWay: Record<string, string[]> = {};
     for (const p of s.printing || []) {
       const wn = (p.wayEn || "").trim();
       if (!wn) continue;
       printingByWay[wn] = (p.baseSteps || []).map((bs: any) => ({
         num: bs.qty,
         price: String(bs.price),
+        // ★ 透传 deliverDay(交期联动用;数据缺失时为 null,由前端兜底)
+        deliverDay: bs.deliverDay ?? null,
       }));
       variantsByWay[wn] = (p.variants || []).map((v: any) => ({
         colorCount: Number(v.colorCount || 1),
@@ -121,6 +124,10 @@ function normalizeProduct(raw: any): ProductData {
         setUpCharge: Number(v.setUpCharge || p.baseSetUpCharge || 0),
         addOn: Number(v.addOn || 0),
       }));
+      // ★ 透传印刷位置(big_json printing[].positions,如 ["Front","Back"];Imprint Location 用)
+      if (Array.isArray(p.positions) && p.positions.length) {
+        printingPositionsByWay[wn] = p.positions.map((x: any) => String(x));
+      }
     }
 
     // ★ 尺码拆分:JSON 把多个尺码用 "|" 拼成字符串,需要拆分成数组
@@ -156,6 +163,8 @@ function normalizeProduct(raw: any): ProductData {
       printingByWay,
       // ★ variants 加价表(颜色×位置 → setUpCharge + addOn)
       variantsByWay,
+      // ★ 每规格各工艺的印刷位置(big_json printing[].positions)
+      printingPositionsByWay,
     };
     // ★ 新格式字段:productWeightKgs / printWidth / printLength / imageUrl
     if (s.productWeightKgs !== undefined) spec.productWeightKgs = Number(s.productWeightKgs);
@@ -286,6 +295,19 @@ function normalizeProduct(raw: any): ProductData {
     images = Object.values(si).map((v: any) => (typeof v === "string" ? v : v?.url || "")).filter(Boolean);
   }
 
+  // ★ 产品级印刷位置(big_json specs[].printing[].positions 并集,保持出现顺序)
+  // Imprint Location 复选框用;raw.surfaces 缺失时的数据来源
+  const imprintPositions: string[] = [];
+  const seenPos = new Set<string>();
+  for (const spec of productSpecs) {
+    const byWay: Record<string, string[]> = (spec as any).printingPositionsByWay || {};
+    for (const wn of Object.keys(byWay)) {
+      for (const pos of byWay[wn]) {
+        if (!seenPos.has(pos)) { seenPos.add(pos); imprintPositions.push(pos); }
+      }
+    }
+  }
+
   const result: any = {
     code: raw.SPU,
     nameEn: raw.title || "",
@@ -298,6 +320,8 @@ function normalizeProduct(raw: any): ProductData {
     productSpecs,
     productPricingSteps,
     printingSurfaces,
+    // ★ big_json 印刷位置并集(Imprint Location 回退数据源)
+    imprintPositions,
     shippingCharge: { amount: 0, currency: "USD", isFixed: true },
     images,
     // ★ 保留顶层 colors 字段(产品本体颜色数组,供 getColorOptions 使用)
