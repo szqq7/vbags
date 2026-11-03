@@ -82,6 +82,58 @@ function safeStr(v: any, fallback: string): string {
 }
 
 /**
+ * 读取某个 spec 某工艺的阶梯价。
+ * 兼容两种数据格式:
+ *  1) 新格式(中文键):printing[].阶梯价 = [0.71, 0.69, ...],与顶层 qty 数组按下标对齐
+ *  2) 旧格式:printing[].baseSteps = [{ qty, price, deliverDay }]
+ */
+function readPrintingSteps(p: any, qtyList: number[]): { num: number; price: string; deliverDay: number | null }[] {
+  const zhTiers = p?.["阶梯价"];
+  if (Array.isArray(zhTiers) && zhTiers.length) {
+    const zhDays = p?.["交期"];
+    return zhTiers.map((price: any, i: number) => ({
+      num: Number(qtyList[i] ?? i + 1),
+      price: String(Number(price ?? 0)),
+      deliverDay:
+        (Array.isArray(zhDays) && zhDays[i] !== undefined && zhDays[i] !== null)
+          ? Number(zhDays[i])
+          : (p?.deliverDay ?? null),
+    }));
+  }
+  return (p?.baseSteps || []).map((bs: any) => ({
+    num: Number(bs.qty),
+    price: String(bs.price),
+    deliverDay: bs.deliverDay ?? null,
+  }));
+}
+
+/**
+ * 读取某个 spec 某工艺的「颜色数 × 位置数」加价表。
+ * 兼容:
+ *  1) 新格式(中文键):printing[].预设价 = [{ 颜色数, 位置数, 版费, 加价差额, 印花价, isBase }]
+ *  2) 旧格式:printing[].variants = [{ colorCount, positionCount, setUpCharge, addOn }]
+ */
+function readPrintingVariants(p: any): { colorCount: number; positionCount: number; setUpCharge: number; addOn: number }[] {
+  const zhPresets = p?.["预设价"];
+  if (Array.isArray(zhPresets) && zhPresets.length) {
+    return zhPresets.map((v: any) => ({
+      colorCount: Number(v?.["颜色数"] || 1),
+      positionCount: Number(v?.["位置数"] || 1),
+      // 版费缺失时回退到该工艺的 baseSetUpCharge
+      setUpCharge: Number(v?.["版费"] ?? p?.baseSetUpCharge ?? 0),
+      // 加价差额 = 相对基础阶梯价(1色1位)的增量
+      addOn: Number(v?.["加价差额"] || 0),
+    }));
+  }
+  return (p?.variants || []).map((v: any) => ({
+    colorCount: Number(v.colorCount || 1),
+    positionCount: Number(v.positionCount || 1),
+    setUpCharge: Number(v.setUpCharge || p.baseSetUpCharge || 0),
+    addOn: Number(v.addOn || 0),
+  }));
+}
+
+/**
  * 将新版扁平 JSON 格式适配为代码内部期望的 ProductData 结构。
  * 检测依据:顶层是否有 SPU 字段。
  */
@@ -112,18 +164,8 @@ function normalizeProduct(raw: any): ProductData {
     for (const p of s.printing || []) {
       const wn = (p.wayEn || "").trim();
       if (!wn) continue;
-      printingByWay[wn] = (p.baseSteps || []).map((bs: any) => ({
-        num: bs.qty,
-        price: String(bs.price),
-        // ★ 透传 deliverDay(交期联动用;数据缺失时为 null,由前端兜底)
-        deliverDay: bs.deliverDay ?? null,
-      }));
-      variantsByWay[wn] = (p.variants || []).map((v: any) => ({
-        colorCount: Number(v.colorCount || 1),
-        positionCount: Number(v.positionCount || 1),
-        setUpCharge: Number(v.setUpCharge || p.baseSetUpCharge || 0),
-        addOn: Number(v.addOn || 0),
-      }));
+      printingByWay[wn] = readPrintingSteps(p, raw.qty || []);
+      variantsByWay[wn] = readPrintingVariants(p);
       // ★ 透传印刷位置(big_json printing[].positions,如 ["Front","Back"];Imprint Location 用)
       if (Array.isArray(p.positions) && p.positions.length) {
         printingPositionsByWay[wn] = p.positions.map((x: any) => String(x));
@@ -215,18 +257,20 @@ function normalizeProduct(raw: any): ProductData {
       seenWays.add(wayName);
 
       const wayPrices: any[] = [];
+      const waySteps = readPrintingSteps(p, raw.qty || []);
+      const wayVariants = readPrintingVariants(p);
 
       // 每个 variant → 一个 productPrintingWayPrice
       const positions = p.positions || [];
-      for (const v of p.variants || []) {
+      for (const v of wayVariants) {
         const posCount = v.positionCount || 1;
         const colorMethod = v.colorCount === 1 ? "1-color" : `${v.colorCount || 1}-color`;
         const addOn = Number(v.addOn || 0);
 
-        const steps = (p.baseSteps || []).map((step: any) => ({
-          num: step.qty,
+        const steps = waySteps.map((step: any) => ({
+          num: step.num,
           price: String((Number(step.price) + addOn).toFixed(6)),
-          printingDay: step.printingDay,
+          printingDay: null,
           deliverDay: step.deliverDay,
         }));
 
@@ -243,10 +287,10 @@ function normalizeProduct(raw: any): ProductData {
       // 兜底:添加 1-color 1-pos(如果 variants 没包括)
       const has1c1p = wayPrices.some((w: any) => w.pricingMethod === "1-color" && w.printingPositionNum === 1);
       if (!has1c1p) {
-        const baseSteps = (p.baseSteps || []).map((step: any) => ({
-          num: step.qty,
+        const baseSteps = waySteps.map((step: any) => ({
+          num: step.num,
           price: String(step.price),
-          printingDay: step.printingDay,
+          printingDay: null,
           deliverDay: step.deliverDay,
         }));
         wayPrices.unshift({
